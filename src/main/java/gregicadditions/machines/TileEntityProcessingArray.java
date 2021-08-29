@@ -435,6 +435,8 @@ public class TileEntityProcessingArray extends RecipeMapMultiblockController {
 				case "ore_washer":
 					trimmedName = "orewasher";
 					break;
+				case "brewery":
+					trimmedName = "brewer";
 			}
 
 			return trimmedName;
