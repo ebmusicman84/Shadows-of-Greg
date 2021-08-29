@@ -544,11 +544,6 @@ public class TileEntityProcessingArray extends RecipeMapMultiblockController {
 				currentRecipe = findRecipe(maxVoltage, importInventory, importFluids, machineItemStack, recipeMap);
 				oldMachineStack = null;
 
-				//Update the previous recipe
-				if(currentRecipe != null) {
-					this.previousRecipe = currentRecipe;
-				}
-
 				this.forceRecipeRecheck = false;
 			}
 
@@ -603,9 +598,6 @@ public class TileEntityProcessingArray extends RecipeMapMultiblockController {
 				if (dirty || forceRecipeRecheck) {
 					this.forceRecipeRecheck = false;
 					currentRecipe = findRecipe(maxVoltage, bus, importFluids, machineItemStack, recipeMap);
-					if (currentRecipe != null) {
-						this.previousRecipe = currentRecipe;
-					}
 				}
 				if(currentRecipe != null && setupAndConsumeRecipeInputs(currentRecipe, i)) {
 					lastRecipeIndex = i;
