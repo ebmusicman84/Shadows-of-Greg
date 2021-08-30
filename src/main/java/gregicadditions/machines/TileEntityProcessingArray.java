@@ -161,9 +161,9 @@ public class TileEntityProcessingArray extends RecipeMapMultiblockController {
 		}
 
 		/*
-		A safety method duplication, used to prevent people from calling findRecipe before the machine stack or
-		recipe map has been populated.
-		 */
+        Overridden solely to update the machine stack and the recipe map at an early point.
+        Recipe multiplication will come at a later time.
+        */
 		@Override
 		protected Recipe findRecipe(long maxVoltage,
 									IItemHandlerModifiable inputs,
@@ -172,12 +172,16 @@ public class TileEntityProcessingArray extends RecipeMapMultiblockController {
 			//Update the machine stack and recipe map
 			findMachineStack();
 
-			return findRecipe(maxVoltage, inputs, fluidInputs, machineItemStack, recipeMap);
+			// Avoid crashing during load, when GTCE initializes its multiblock previews
+			if(machineItemStack.isEmpty() || this.recipeMap == null) {
+				return null;
+			}
 
+			return this.recipeMap.findRecipe(maxVoltage, inputs, fluidInputs, this.getMinTankCapacity(this.getOutputTank()));
 		}
 
-		protected Recipe findRecipe(long maxVoltage, IItemHandlerModifiable inputs, IMultipleTankHandler fluidInputs, ItemStack machineStack, RecipeMap<?> rmap) {
 
+		protected Recipe multiplyRecipe(IItemHandlerModifiable inputs, IMultipleTankHandler fluidInputs, Recipe recipe, ItemStack machineStack, RecipeMap<?> rmap) {
 			//Check if passed a null recipemap or machine stack
 			if(rmap == null || machineStack == null) {
 				return null;
@@ -193,17 +197,8 @@ public class TileEntityProcessingArray extends RecipeMapMultiblockController {
 			//Find the number of machines
 			this.numberOfMachines = Math.min(GAConfig.processingArray.processingArrayMachineLimit, machineStack.getCount());
 
-			Recipe recipe = rmap.findRecipe(voltageTier,
-					inputs,
-					fluidInputs,
-					this.getMinTankCapacity(this.getOutputTank()));
-
-			// No matching recipe.
-			if(recipe == null)
-				return null;
-
-			Set<ItemStack> ingredientStacks = findIngredients(inputs);
-			Map<String, Integer> fluidStacks = findFluid(fluidInputs);
+			Set<ItemStack> ingredientStacks = findAllItemsInInputs(inputs);
+			Map<String, Integer> fluidStacks = findAllFluidsInInputs(fluidInputs);
 
 			int itemMultiplier = getMinRatioItem(ingredientStacks, recipe, this.numberOfMachines);
 			int fluidMultiplier = getMinRatioFluid(fluidStacks, recipe, this.numberOfMachines);
@@ -263,7 +258,7 @@ public class TileEntityProcessingArray extends RecipeMapMultiblockController {
 			return controller.getAbilities(MultiblockAbility.IMPORT_ITEMS);
 		}
 
-		protected static Set<ItemStack> findIngredients(IItemHandlerModifiable inputs) {
+		protected static Set<ItemStack> findAllItemsInInputs(IItemHandlerModifiable inputs) {
 			Set<ItemStack> countIngredients = new HashSet<>();
 			for(int slot = 0; slot < inputs.getSlots(); slot++) {
 				ItemStack wholeItemStack = inputs.getStackInSlot(slot);
@@ -311,7 +306,7 @@ public class TileEntityProcessingArray extends RecipeMapMultiblockController {
 			return minMultiplier;
 		}
 
-		protected static Map<String, Integer> findFluid(IMultipleTankHandler fluidInputs) {
+		protected static Map<String, Integer> findAllFluidsInInputs(IMultipleTankHandler fluidInputs) {
 
 			Map<String, Integer> countFluid = new HashMap<>();
 			for(IFluidTank tank : fluidInputs)
@@ -522,6 +517,7 @@ public class TileEntityProcessingArray extends RecipeMapMultiblockController {
 		private void trySearchNewRecipeCombined() {
 			long maxVoltage = getMaxVoltage();
 			Recipe currentRecipe;
+			Recipe multipliedRecipe = null;
 			IItemHandlerModifiable importInventory = getInputInventory();
 			IMultipleTankHandler importFluids = getInputTank();
 
@@ -543,16 +539,25 @@ public class TileEntityProcessingArray extends RecipeMapMultiblockController {
 			}
 			else {
 				//If the previous recipe was null, or does not match the current recipe, search for a new recipe
-				currentRecipe = findRecipe(maxVoltage, importInventory, importFluids, machineItemStack, recipeMap);
+				currentRecipe = findRecipe(maxVoltage, importInventory, importFluids);
 				oldMachineStack = null;
+
+				//Update the previous recipe
+				if(currentRecipe != null) {
+					this.previousRecipe = currentRecipe;
+				}
 
 				this.forceRecipeRecheck = false;
 			}
 
+			if(currentRecipe != null) {
+				multipliedRecipe = multiplyRecipe(importInventory, importFluids, currentRecipe, machineItemStack, recipeMap);
+			}
+
 			//Attempts to run the current recipe, if it is not null
-			if(currentRecipe != null && setupAndConsumeRecipeInputs(currentRecipe)) {
+			if(multipliedRecipe != null && setupAndConsumeRecipeInputs(multipliedRecipe)) {
 				oldMachineStack = machineItemStack;
-				setupRecipe(currentRecipe);
+				setupRecipe(multipliedRecipe);
 			}
 		}
 
@@ -562,6 +567,7 @@ public class TileEntityProcessingArray extends RecipeMapMultiblockController {
 		private void trySearchNewRecipeDistinct() {
 			long maxVoltage = getMaxVoltage();
 			Recipe currentRecipe = null;
+			Recipe multipliedRecipe = null;
 			List<IItemHandlerModifiable> importInventory = getInputBuses();
 			IMultipleTankHandler importFluids = getInputTank();
 			RecipeMapMultiblockController controller = (RecipeMapMultiblockController) this.metaTileEntity;
@@ -585,8 +591,9 @@ public class TileEntityProcessingArray extends RecipeMapMultiblockController {
 			//Check if the previous recipe is null, to avoid having to iterate the distinct inputs
 			if(previousRecipe != null && previousRecipe.matches(false, importInventory.get(lastRecipeIndex), importFluids)) {
 				currentRecipe = previousRecipe;
-				if(setupAndConsumeRecipeInputs(currentRecipe, lastRecipeIndex)) {
-					setupRecipe(currentRecipe);
+				multipliedRecipe = multiplyRecipe(importInventory.get(lastRecipeIndex), importFluids, currentRecipe, machineItemStack, recipeMap);
+				if(setupAndConsumeRecipeInputs(multipliedRecipe, lastRecipeIndex)) {
+					setupRecipe(multipliedRecipe);
 					oldMachineStack = machineItemStack;
 					return;
 				}
@@ -599,11 +606,18 @@ public class TileEntityProcessingArray extends RecipeMapMultiblockController {
 				boolean dirty = checkRecipeInputsDirty(bus, importFluids, i);
 				if (dirty || forceRecipeRecheck) {
 					this.forceRecipeRecheck = false;
-					currentRecipe = findRecipe(maxVoltage, bus, importFluids, machineItemStack, recipeMap);
+					currentRecipe = findRecipe(maxVoltage, bus, importFluids);
+					if(currentRecipe != null) {
+						this.previousRecipe = currentRecipe;
+					}
 				}
-				if(currentRecipe != null && setupAndConsumeRecipeInputs(currentRecipe, i)) {
+				if(currentRecipe != null) {
+					multipliedRecipe = multiplyRecipe(bus, importFluids, currentRecipe, machineItemStack, recipeMap);
+				}
+
+				if(multipliedRecipe != null && setupAndConsumeRecipeInputs(multipliedRecipe, i)) {
 					lastRecipeIndex = i;
-					setupRecipe(currentRecipe);
+					setupRecipe(multipliedRecipe);
 					oldMachineStack = machineItemStack;
 					break;
 				}
